@@ -1,6 +1,6 @@
 # graphchi-clojure
 
-A Clojure library designed to ... well, that part is up to you.
+A wrapper around the java implementation of graphchi http://code.google.com/p/graphchi/ for fast non distributed graph computation !
 
 ## Usage
 
