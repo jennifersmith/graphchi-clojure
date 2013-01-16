@@ -1,11 +1,12 @@
 (ns graphchi-clojure.core
   (:import [edu.cmu.graphchi GraphChiProgram]
            [edu.cmu.graphchi.engine GraphChiEngine]
+           [edu.cmu.graphchi.aggregators VertexAggregator ForeachCallback]
            [edu.cmu.graphchi.datablocks FloatConverter IntConverter]
            [edu.cmu.graphchi.util Toplist
              IdFloat LabelAnalysis]))
 
-(set! *warn-on-reflection* true)
+;;(set! *warn-on-reflection* true)
 
 (defn all-in-edges-vertices [vertex]
   (vec
@@ -51,6 +52,14 @@
   (when-not dont-update-in-edges
     (update-in-edges vertex in-edges)))
 
+(defn tally-up-labels [file outfile]
+  (let [result (atom {})
+        foreach-callback (proxy [ ForeachCallback] []
+                             (callback [vertexId vertexValue]
+                                       (swap! result #(merge-with + % {vertexValue 1}) )
+                                       ))]
+    (VertexAggregator/foreach file (new IntConverter) foreach-callback)
+    @result))
 
 (defn calc-new-vertex-value [{:keys [in-edges] :as vertex-map} iteration]
   (if (zero? iteration)
@@ -151,8 +160,8 @@
     (doto engine
       (.setEdataConverter (new IntConverter))
       (.setVertexDataConverter (new IntConverter))
-      (.setEnableScheduler false)
-      (.run program 5000))
+      (.setEnableScheduler true)
+      (.run program 500))
     (println "Ready")
     ;; top20 = Toplist.topListFloat(baseFilename, 20);
 
