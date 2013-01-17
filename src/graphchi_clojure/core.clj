@@ -8,6 +8,8 @@
 
 ;;(set! *warn-on-reflection* true)
 
+(def current-exclusions (atom nil))
+
 (defn all-in-edges-vertices [vertex]
   (vec
    (map
@@ -80,7 +82,7 @@
       (calc-new-vertex-value iteration)
       (calc-out-edges)))
 
-(defn init-cc [{:keys [in-edges out-edges value id]}]
+(defn init-cc [exclusions {:keys [in-edges out-edges value id]}]
   {
    :value id  ;; value as ID
    :out-edges (repeat (count out-edges) id) ;; set the outbound arrows to be the same as me
@@ -89,8 +91,12 @@
    }
 )
 
-(defn run-cc [{:keys [in-edges out-edges value]}]
-  (let [min-in-my-region (apply min value (concat in-edges out-edges))
+(defn run-cc [exclusions {:keys [in-edges out-edges value] :as whole-lot}]
+
+  (let [
+        valid-in-edges (remove exclusions in-edges)
+        valid-out-edges (remove exclusions out-edges)
+        min-in-my-region (apply min value (concat valid-in-edges valid-out-edges))
         new-in-edges (repeat (count in-edges) min-in-my-region)
         new-out-edges (repeat (count out-edges) min-in-my-region)
         ]
@@ -99,14 +105,39 @@
      :in-edges new-in-edges
      :out-edges new-out-edges
      :edge-rescheduling {
-                         :in-edges (map not= new-in-edges in-edges)
-                         :out-edges (map not= new-out-edges out-edges)}}))
+                         :in-edges  (->> in-edges
+                                         (map not= new-in-edges)
+                                         (map (complement exclusions)))
+                         :out-edges  (->> out-edges
+                                         (map not= new-out-edges)
+                                         (map (complement exclusions)))}}))
 
+(defn run-cc [exclusions {:keys [in-edges out-edges value] :as whole-lot}]
 
-(defn connected-components [vertex-map iteration]
-  (if (zero? iteration)
-    (init-cc vertex-map)
-    (run-cc vertex-map)))
+  (let [
+        valid-in-edges (remove exclusions in-edges)
+        valid-out-edges (remove exclusions out-edges)
+        min-in-my-region (apply min value (concat valid-in-edges valid-out-edges))
+        new-in-edges (repeat (count in-edges) min-in-my-region)
+        new-out-edges (repeat (count out-edges) min-in-my-region)
+        ]
+    {
+     :value min-in-my-region ;; minimize
+     :in-edges new-in-edges
+     :out-edges new-out-edges
+     :edge-rescheduling {
+                         :in-edges  (->> in-edges
+                                         (map not= new-in-edges)
+                                         (map (complement exclusions)))
+                         :out-edges  (->> out-edges
+                                         (map not= new-out-edges)
+                                         (map (complement exclusions)))}}))
+
+(defn connected-components [exclusions vertex-map iteration]
+  (println "Exclusions are " exclusions " value is " (:value vertex-map) " excluded? " (exclusions (:value vertex-map)) vertex-map)
+  (cond (zero? iteration) (init-cc vertex-map)
+        (exclusions (:value vertex-map)) (run-excluded vertex-map)
+        :else (run-cc exclusions vertex-map)))
 
 (defn create-program [update-fn]
   (proxy
@@ -115,27 +146,29 @@
       (let [ original (vertex-to-map vertex)
             result (update-fn original (.getIteration context))
             scheduler (.getScheduler context)]
-       ;; (println "INPUT " original)
-      ;;  (println "OUTPUT " result)
-        (update-vertex vertex result)
-      ;;  (println "AFTER UPDATE" (vertex-to-map vertex))
-        (when (result :reschedule)
-          (.addTask scheduler (.getId vertex)))
-        (when (result :edge-rescheduling)
-          (let [{:keys [in-edges out-edges]} (result :edge-rescheduling)]
-            (doall
-             (map
-              #(when %1 (.addTask scheduler (.getVertexId (.inEdge vertex %2))))
-              in-edges
-              (range))
-             )
-            (doall
-             (map
-              #(when %1 (.addTask scheduler (.getVertexId (.outEdge vertex %2))))
-              out-edges
-              (range))
-             )
-            ))))
+        (println "INPUT " original)
+        (println "OUTPUT " result)
+
+        (when-not (:no-change result)
+          (update-vertex vertex result)
+          ;;  (println "AFTER UPDATE" (vertex-to-map vertex))
+          (when (result :reschedule)
+            (.addTask scheduler (.getId vertex)))
+          (when (result :edge-rescheduling)
+            (let [{:keys [in-edges out-edges]} (result :edge-rescheduling)]
+              (doall
+               (map
+                #(when %1 (.addTask scheduler (.getVertexId (.inEdge vertex %2))))
+                in-edges
+                (range))
+               )
+              (doall
+               (map
+                #(when %1 (.addTask scheduler (.getVertexId (.outEdge vertex %2))))
+                out-edges
+                (range))
+               )
+              ))) ))
     (beginInterval [context interval] )
     (beginIteration [context])
     (endIteration [context])
@@ -180,14 +213,19 @@
           )
         (range) i))))
 
-(defn -main
-  [& args]
-  (if true
-    (do
-      (run-with-scheduler "../facebook/0.edges" 2 (create-program connected-components))
-      (LabelAnalysis/computeLabels "../facebook/0.edges")
-;;      (map #(vector (.id %) (.count %)))
-      nil)
-    (do
-      (run "../facebook/0.edges" 2 (create-program page-rank) 30)
-      (report-top-20 "../facebook/0.edges"))))
+(defn -main-cc
+  ([file numb-edges] (-main file numb-edges nil))
+  ( [file numb-edges exclusion-file]
+      (let [exclusions
+            (when exclusion-file
+              (map #(Integer/parseInt %)
+                   (clojure.string/split-lines (slurp exclusion-file))))]
+        (println "Running with " (count exclusions) " exclusions")
+        (loop [exclusions exclusions]
+          (do
+            (run-with-scheduler file (Integer/parseInt numb-edges) (create-program (partial connected-components  (set exclusions))))
+            (println
+             (tally-up-labels file (str file ".components"))))
+          (when (seq exclusions) (recur (rest exclusions)))))))
+
+(def -main -main-cc)
