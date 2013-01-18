@@ -155,13 +155,13 @@
 
 ))
 
-(defn run-with-scheduler [file shards program]
+(defn run-with-scheduler [file shards program iterations]
   (let [engine (new GraphChiEngine file shards)]
     (doto engine
       (.setEdataConverter (new IntConverter))
       (.setVertexDataConverter (new IntConverter))
       (.setEnableScheduler true)
-      (.run program 500))
+      (.run program iterations))
     (println "Ready")
     ;; top20 = Toplist.topListFloat(baseFilename, 20);
 
@@ -180,14 +180,30 @@
           )
         (range) i))))
 
+(defmulti run-algo :algo )
+
+(defmethod run-algo :pagerank [{:keys [file n-shards iterations]}]
+    (do
+      (run file n-shards (create-program page-rank) iterations)
+      (report-top-20 file)))
+
+(defmethod run-algo :connected-components [{:keys [file n-shards iterations]}]
+  (run-with-scheduler file n-shards (create-program connected-components) iterations)
+  (tally-up-labels file "notused!"))
+
+(defn parse-args [args]
+ (reduce
+  #(assoc %1 (keyword (first %2)) (second %2))
+  {}
+  (partition 2 args)))
+
+
 (defn -main
-  [& args]
-  (if true
-    (do
-      (run-with-scheduler "../facebook/0.edges" 2 (create-program connected-components))
-      (LabelAnalysis/computeLabels "../facebook/0.edges")
-;;      (map #(vector (.id %) (.count %)))
-      nil)
-    (do
-      (run "../facebook/0.edges" 2 (create-program page-rank) 30)
-      (report-top-20 "../facebook/0.edges"))))
+  [algo file n-shards iterations & additional]
+  (run-algo
+   (merge
+    {:algo (keyword algo)
+     :iterations (Integer/parseInt iterations)
+     :n-shards (Integer/parseInt n-shards)
+     :file file}
+    (parse-args additional))))
